@@ -1,0 +1,14 @@
+{
+  "name": "pcaob-filter-service",
+  "version": "1.0.0",
+  "description": "PCAOB firm filings filter service for n8n",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "adm-zip": "^0.5.10",
+    "node-fetch": "^2.7.0"
+  }
+}
