@@ -109,12 +109,14 @@ app.get('/filter', async function(req, res) {
 
     console.log('Filtered ' + filteredRows.length + ' rows');
 
+    const allColumns = Object.keys(filteredRows[0]);
+    
     const csvLines = [
-      KEEP_COLUMNS.map(escapeCSV).join(',')
+      allColumns.map(escapeCSV).join(',')
     ];
-
+    
     filteredRows.forEach(function(row) {
-      csvLines.push(KEEP_COLUMNS.map(function(col) {
+      csvLines.push(allColumns.map(function(col) {
         return escapeCSV(row[col]);
       }).join(','));
     });
