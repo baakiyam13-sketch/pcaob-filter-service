@@ -81,10 +81,23 @@ app.get('/filter', async function(req, res) {
     const csvText = csvEntry.getData().toString('utf8');
     console.log('CSV extracted successfully');
 
-    const lines = csvText.split('\n');
-    const headers = parseCSVLine(lines[0]).map(function(h) {
-      return h.replace(/^"|"$/g, '');
-    });
+// Handle header that may span two lines due to quoted newline in "Issuer Ticker\n(Not Available)"
+const firstNewline = csvText.indexOf('\n');
+const secondNewline = csvText.indexOf('\n', firstNewline + 1);
+const headerCandidate = csvText.substring(0, firstNewline);
+const headerContinuation = csvText.substring(firstNewline + 1, secondNewline);
+
+// If first line ends mid-quote, merge with second line
+const openQuotes = (headerCandidate.match(/"/g) || []).length;
+const headerRaw = openQuotes % 2 !== 0
+  ? headerCandidate + ' ' + headerContinuation
+  : headerCandidate;
+
+  const dataStart = openQuotes % 2 !== 0 ? secondNewline + 1 : firstNewline + 1;
+  const lines = csvText.substring(dataStart).split('\n');
+  const headers = parseCSVLine(headerRaw).map(function(h) {
+    return h.replace(/^"|"$/g, '').replace(/\s+/g, ' ').trim();
+  });
 
     const firmNameIndex = headers.indexOf('Firm Name');
     if (firmNameIndex === -1) {
