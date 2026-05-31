@@ -917,7 +917,10 @@ def build_excel(enriched, dashboard, pcaob_to_eqr, bizinta_data, raw_pcaob_rows,
 def build_html(enriched, dashboard, pcaob_to_eqr, run_date_str):
     gap_flags = detect_gap_years(enriched)
 
-    def jsd(o): return json.dumps(o, ensure_ascii=False)
+    def jsd(o):
+        s = json.dumps(o, ensure_ascii=False)
+        s = s.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e")
+        return s
 
     dash_js = jsd([{
         "ep":     r["ep"],
