@@ -5,27 +5,9 @@ const fetch = require('node-fetch');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const FIRM_NAMES = [
-  'Paris, Kreit & Chiu CPA LLP',
-  'Kreit & Chiu CPA LLP'
-];
-
-const KEEP_COLUMNS = [
-  'Form Filing ID',
-  'Firm Name',
-  'Issuer Name',
-  'Issuer CIK',
-  'Audit Report Date',
-  'Fiscal Period End Date',
-  'Engagement Partner Last Name',
-  'Engagement Partner First Name',
-  'Firm Issuing City',
-  'Firm Issuing State',
-  'Signed Last Name',
-  'Signed First Name',
-  'Signed Date',
-  'Filing Date'
-];
+// Filter by Firm ID 6651 - covers all name variants:
+// Benjamin & Co, Kreit & Chiu CPA LLP, Paris Kreit & Chiu CPA LLP
+const FIRM_ID = '6651';
 
 function parseCSVLine(line) {
   const cols = [];
@@ -53,7 +35,7 @@ function escapeCSV(val) {
 }
 
 app.get('/health', function(req, res) {
-  res.json({ status: 'ok' });
+  res.json({ status: 'ok', firm_id: FIRM_ID });
 });
 
 app.get('/filter', async function(req, res) {
@@ -81,37 +63,43 @@ app.get('/filter', async function(req, res) {
     const csvText = csvEntry.getData().toString('utf8');
     console.log('CSV extracted successfully');
 
-// Handle header that may span two lines due to quoted newline in "Issuer Ticker\n(Not Available)"
-const firstNewline = csvText.indexOf('\n');
-const secondNewline = csvText.indexOf('\n', firstNewline + 1);
-const headerCandidate = csvText.substring(0, firstNewline);
-const headerContinuation = csvText.substring(firstNewline + 1, secondNewline);
+    // Handle header that may span two lines due to quoted newline
+    const firstNewline = csvText.indexOf('\n');
+    const secondNewline = csvText.indexOf('\n', firstNewline + 1);
+    const headerCandidate = csvText.substring(0, firstNewline);
+    const headerContinuation = csvText.substring(firstNewline + 1, secondNewline);
 
-// If first line ends mid-quote, merge with second line
-const openQuotes = (headerCandidate.match(/"/g) || []).length;
-const headerRaw = openQuotes % 2 !== 0
-  ? headerCandidate + ' ' + headerContinuation
-  : headerCandidate;
+    const openQuotes = (headerCandidate.match(/"/g) || []).length;
+    const headerRaw = openQuotes % 2 !== 0
+      ? headerCandidate + ' ' + headerContinuation
+      : headerCandidate;
 
-  const dataStart = openQuotes % 2 !== 0 ? secondNewline + 1 : firstNewline + 1;
-  const lines = csvText.substring(dataStart).split('\n');
-  const headers = parseCSVLine(headerRaw).map(function(h) {
-    return h.replace(/^"|"$/g, '').replace(/\s+/g, ' ').trim();
-  });
+    const dataStart = openQuotes % 2 !== 0 ? secondNewline + 1 : firstNewline + 1;
+    const lines = csvText.substring(dataStart).split('\n');
+    const headers = parseCSVLine(headerRaw).map(function(h) {
+      return h.replace(/^"|"$/g, '').replace(/\s+/g, ' ').trim();
+    });
 
+    // Find both Firm ID and Firm Name columns
+    const firmIdIndex   = headers.indexOf('Firm ID');
     const firmNameIndex = headers.indexOf('Firm Name');
-    if (firmNameIndex === -1) {
-      throw new Error('Firm Name column not found');
+
+    if (firmIdIndex === -1) {
+      throw new Error('Firm ID column not found in CSV headers');
     }
+    if (firmNameIndex === -1) {
+      throw new Error('Firm Name column not found in CSV headers');
+    }
+
+    console.log('Filtering by Firm ID: ' + FIRM_ID);
 
     const filteredRows = [];
     for (let i = 1; i < lines.length; i++) {
       const line = lines[i].trim();
-      if (!line) {
-        continue;
-      }
+      if (!line) continue;
       const cols = parseCSVLine(line);
-      if (FIRM_NAMES.indexOf(cols[firmNameIndex]) !== -1) {
+      // Primary filter: Firm ID 6651 (catches all name variants)
+      if ((cols[firmIdIndex] || '').trim() === FIRM_ID) {
         const row = {};
         headers.forEach(function(h, idx) {
           row[h] = cols[idx] || '';
@@ -120,14 +108,18 @@ const headerRaw = openQuotes % 2 !== 0
       }
     }
 
-    console.log('Filtered ' + filteredRows.length + ' rows');
+    console.log('Filtered ' + filteredRows.length + ' rows for Firm ID ' + FIRM_ID);
+
+    // Log distinct firm names found (for audit trail)
+    const firmNames = [...new Set(filteredRows.map(r => r['Firm Name']))];
+    console.log('Firm name variants found: ' + firmNames.join(' | '));
+
+    if (!filteredRows.length) {
+      throw new Error('No rows found for Firm ID ' + FIRM_ID);
+    }
 
     const allColumns = Object.keys(filteredRows[0]);
-    
-    const csvLines = [
-      allColumns.map(escapeCSV).join(',')
-    ];
-    
+    const csvLines = [allColumns.map(escapeCSV).join(',')];
     filteredRows.forEach(function(row) {
       csvLines.push(allColumns.map(function(col) {
         return escapeCSV(row[col]);
@@ -141,6 +133,7 @@ const headerRaw = openQuotes % 2 !== 0
     res.setHeader('Content-Disposition', 'attachment; filename="' + fileName + '"');
     res.setHeader('X-Row-Count', String(filteredRows.length));
     res.setHeader('X-Report-Date', today);
+    res.setHeader('X-Firm-Names', firmNames.join(' | '));
     res.send(csvLines.join('\n'));
 
   } catch (err) {
@@ -150,5 +143,5 @@ const headerRaw = openQuotes % 2 !== 0
 });
 
 app.listen(PORT, function() {
-  console.log('PCAOB filter service running on port ' + PORT);
+  console.log('PCAOB filter service running on port ' + PORT + ' | Firm ID: ' + FIRM_ID);
 });
