@@ -647,14 +647,39 @@ def build_excel(enriched, dashboard, pcaob_to_eqr, bizinta_data, raw_pcaob_rows,
 
     # Build sets for reconciliation
     pcaob_issuers  = set(r["issuer"] for r in enriched)
-    bizinta_active = set()
-    for biz_name, biz_info in bizinta_data.items():
-        pcaob_name = BIZINTA_TO_PCAOB.get(biz_name)
-        if pcaob_name and biz_info.get("status") == "Active":
-            bizinta_active.add(pcaob_name)
 
-    filed_but_gone   = sorted(pcaob_issuers - bizinta_active)
-    active_no_filing = sorted(bizinta_active - pcaob_issuers)
+    # Category 1: in PCAOB filings but not active in Bizinta
+    # A PCAOB issuer is "covered" if it maps to an Active Bizinta client
+    active_biz_pcaob_names = set()
+    for biz_name, biz_info in bizinta_data.items():
+        if biz_info.get("status") == "Active":
+            mapped = BIZINTA_TO_PCAOB.get(biz_name)
+            if mapped:
+                active_biz_pcaob_names.add(mapped)
+    filed_but_gone = sorted(pcaob_issuers - active_biz_pcaob_names)
+
+    # Category 2: Active in Bizinta but no PCAOB filing found
+    # Include ALL active Bizinta clients where either:
+    #   (a) their BIZINTA_TO_PCAOB mapping is None (not an issuer / no mapping defined), OR
+    #   (b) their mapped PCAOB name has no filing in enriched
+    # Exclude ghost clients and internal non-clients (None values already handled)
+    active_no_filing = []
+    for biz_name, biz_info in sorted(bizinta_data.items()):
+        if biz_info.get("status") != "Active":
+            continue
+        mapped_pcaob = BIZINTA_TO_PCAOB.get(biz_name)
+        # If mapped and the PCAOB name HAS filings, skip (this client is covered)
+        if mapped_pcaob and mapped_pcaob in pcaob_issuers:
+            continue
+        # Otherwise: either no mapping, mapping=None, or mapped but no filing
+        active_no_filing.append({
+            "biz_name":    biz_name,
+            "pcaob_name":  mapped_pcaob or "",
+            "ep":          biz_info.get("ep", ""),
+            "eqr":         biz_info.get("eqr", ""),
+            "reason":      "No PCAOB mapping defined" if mapped_pcaob is None or biz_name not in BIZINTA_TO_PCAOB
+                           else ("Mapped but no filing found" if mapped_pcaob else "No PCAOB mapping defined"),
+        })
 
     # Category 1: Filed with PCAOB but not active in Bizinta
     ws4.merge_cells("A2:E2")
@@ -700,20 +725,14 @@ def build_excel(enriched, dashboard, pcaob_to_eqr, bizinta_data, raw_pcaob_rows,
     ws4.row_dimensions[ri].height = 22
     ri += 1
 
-    hdrs4b = ["PCAOB Name (from mapping)", "Bizinta Name", "Bizinta EP", "Bizinta EQR", "Notes"]
+    hdrs4b = ["Bizinta Client Name", "PCAOB Mapped Name", "Bizinta EP", "Bizinta EQR", "Notes"]
     ws4.row_dimensions[ri].height = 32
     for c, h in enumerate(hdrs4b, 1): hdr(ws4.cell(ri, c, h), bg=MED_BLUE)
     ri += 1
 
-    for pcaob_name in active_no_filing:
-        biz_name = PCAOB_TO_BIZINTA.get(pcaob_name, "")
-        biz_ep   = ""
-        biz_eqr  = ""
-        if biz_name and biz_name in bizinta_data:
-            biz_ep  = bizinta_data[biz_name].get("ep", "")
-            biz_eqr = bizinta_data[biz_name].get("eqr", "")
-        note = "May be new client, non-issuer, or PCAOB name mismatch"
-        for ci, v in enumerate([pcaob_name, biz_name, biz_ep, biz_eqr, note], 1):
+    for item in active_no_filing:
+        for ci, v in enumerate([item["biz_name"], item["pcaob_name"],
+                                 item["ep"], item["eqr"], item["reason"]], 1):
             cell = ws4.cell(ri, ci, v)
             cell.font = Font(name=F, size=10)
             cell.border = tbdr("DDDDDD")
@@ -941,17 +960,19 @@ def build_html(enriched, dashboard, pcaob_to_eqr, run_date_str):
     } for r in dashboard])
 
     all_js = jsd([{
-        "ep":     r["ep"],
-        "issuer": r["issuer"],
-        "yr":     r["year"],
-        "consec": r["consec"],
-        "sc":     r["sc"],
-        "sl":     r["sl"],
-        "signer": r["signer"],
-        "filed":  r["filed"][:10],
-        "eqr":    pcaob_to_eqr.get(r["issuer"], ""),
+        "ep":      r["ep"],
+        "issuer":  r["issuer"],
+        "startYr": r["start_yr"],
+        "yr":      r["year"],
+        "consec":  r["consec"],
+        "left":    r["yrs_left"],
+        "sc":      r["sc"],
+        "sl":      r["sl"],
+        "signer":  r["signer"],
+        "filed":   r["filed"][:10],
+        "eqr":     pcaob_to_eqr.get(r["issuer"], ""),
         "calcNote": r["calc_note"],
-        "hasGap": (r["ep"], r["issuer"], r["year"]) in gap_flags,
+        "hasGap":  (r["ep"], r["issuer"], r["year"]) in gap_flags,
     } for r in enriched])
 
     eps    = sorted(set(r["ep"] for r in dashboard))
